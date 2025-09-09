@@ -25,6 +25,7 @@ use super::auth;
 pub struct Config {
 	pub album_art_pattern: Option<Regex>,
 	pub ddns_update_url: Option<http::Uri>,
+	pub sonos_api_url: Option<String>,
 	pub mount_dirs: Vec<MountDir>,
 	pub users: Vec<User>,
 }
@@ -49,6 +50,8 @@ impl TryFrom<storage::Config> for Config {
 			None => None,
 		};
 
+		config.sonos_api_url = c.sonos_api_url;
+
 		Ok(config)
 	}
 }
@@ -59,6 +62,7 @@ impl From<Config> for storage::Config {
 			album_art_pattern: c.album_art_pattern.map(|p| p.as_str().to_owned()),
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
 			ddns_update_url: c.ddns_update_url.map(|u| u.to_string()),
+			sonos_api_url: c.sonos_api_url,
 			users: c.users.into_iter().map(|u| u.into()).collect(),
 		}
 	}
@@ -200,6 +204,10 @@ impl Manager {
 
 	pub async fn get_ddns_update_url(&self) -> Option<http::Uri> {
 		self.config.read().await.ddns_update_url.clone()
+	}
+
+	pub async fn get_sonos_api_url(&self) -> Option<String> {
+		self.config.read().await.sonos_api_url.clone()
 	}
 
 	pub async fn set_ddns_update_url(&self, url: Option<http::Uri>) -> Result<(), Error> {

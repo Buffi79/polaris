@@ -1,0 +1,12 @@
+album_art_pattern = "Folder.(jpeg|jpg|png)"
+sonos_api_url = "http://192.168.0.5:5005"
+
+[[mount_dirs]]
+source = "/mnt/mp3/Italiano"
+name = "Test"
+
+[[users]]
+name = "admin"
+admin = true
+hashed_password = "$pbkdf2-sha256$i=10000,l=32$agnXmSeJ7TvC2Yt+w1Wq0w$MdVfOBTgc7/ubhneqcbahPCBUWvoTc6E2QbuZ31+TqQ"
+sonos_api_url = "http://192.168.0.5:5005"

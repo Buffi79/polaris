@@ -27,6 +27,8 @@ pub struct Config {
 	pub mount_dirs: Vec<MountDir>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub ddns_update_url: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub sonos_api_url: Option<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub users: Vec<User>,
 }

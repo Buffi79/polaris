@@ -37,6 +37,7 @@ pub fn read_legacy_config(
 		album_art_pattern: Some(album_art_pattern),
 		mount_dirs,
 		ddns_update_url: None,
+		sonos_api_url: None,
 		users: users.into_values().collect(),
 	}))
 }
@@ -211,6 +212,7 @@ mod test {
 			album_art_pattern: Some("Folder.(jpeg|jpg|png)".to_owned()),
 			mount_dirs: vec![],
 			ddns_update_url: None,
+			sonos_api_url: None,
 			users: vec![],
 		};
 
@@ -233,6 +235,7 @@ mod test {
 				name: "root".to_owned(),
 			}],
 			ddns_update_url: None,
+			sonos_api_url: None,
 			users: vec![config::storage::User {
 				name: "example_user".to_owned(),
 				admin: Some(true),

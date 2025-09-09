@@ -13,6 +13,7 @@ mod app;
 mod options;
 mod paths;
 mod server;
+mod sonos;
 #[cfg(test)]
 mod test;
 mod ui;
