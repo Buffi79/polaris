@@ -14,7 +14,7 @@ use crate::app::Error;
 
 mod mounts;
 pub mod storage;
-mod sonos;
+pub mod sonos;
 mod user;
 
 pub use mounts::*;

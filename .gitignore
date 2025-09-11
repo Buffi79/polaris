@@ -19,7 +19,10 @@ polaris.pid
 profile.json
 /peaks
 /thumbnails
+/polaris-web
+/web
 
 # Release process artifacts (usually runs on CI)
 release
 *.res
+*.backup

@@ -14,9 +14,6 @@ pub struct SonosSpeaker {
     /// Whether the speaker is currently online and available
     #[schema(examples(true, false))]
     pub available: bool,
-    /// Current volume (0-100)
-    #[schema(examples(50, 75, 25))]
-    pub volume: Option<u8>,
 }
 
 /// Request to play a track on Sonos
@@ -57,6 +54,8 @@ pub struct SonosState {
     /// Total track duration in seconds
     #[schema(examples(240, 180))]
     pub duration: Option<u32>,
+    #[schema(examples(50, 75, 25))]
+    pub volume: Option<u8>,
 }
 
 /// Service to interact with node-sonos-http-api
@@ -90,17 +89,11 @@ impl SonosService {
                                 if let (Some(_uuid), Some(room_name)) = 
                                     (coordinator.get("uuid").and_then(|u| u.as_str()),
                                      coordinator.get("roomName").and_then(|r| r.as_str())) {
-                                    
-                                    let volume = coordinator.get("state")
-                                        .and_then(|s| s.get("volume"))
-                                        .and_then(|v| v.as_u64())
-                                        .map(|v| v as u8);
-
+     
                                     speakers.push(SonosSpeaker {
                                         id: room_name.to_string(),
                                         name: room_name.to_string(),
                                         available: true,
-                                        volume,
                                     });
                                 }
                             }
@@ -195,7 +188,7 @@ impl SonosService {
                         .map(|s| s.to_string());
                     
                     // Parse position and duration in seconds
-                    let position = state_data.get("relTime")
+                    let position = state_data.get("elapsedTime")
                         .and_then(|t| t.as_str())
                         .and_then(|s| parse_time_to_seconds(s))
                         .map(|s| s as u32);
@@ -205,6 +198,10 @@ impl SonosService {
                         .and_then(|d| d.as_str())
                         .and_then(|s| parse_time_to_seconds(s))
                         .map(|s| s as u32);
+
+                    let volume = state_data.get("volume")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u8);
                     
                     Ok(SonosState {
                         is_playing,
@@ -212,6 +209,7 @@ impl SonosService {
                         title,
                         position,
                         duration,
+                        volume
                     })
                 } else {
                     // Return empty state if speaker not found or error
@@ -221,6 +219,7 @@ impl SonosService {
                         title: None,
                         position: None,
                         duration: None,
+                        volume: None,
                     })
                 }
             }
@@ -232,6 +231,7 @@ impl SonosService {
                     title: None,
                     position: None,
                     duration: None,
+                    volume: None,
                 })
             }
         }

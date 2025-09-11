@@ -14,6 +14,7 @@ mod api;
 mod auth;
 mod error;
 mod logger;
+mod sonos_api;
 mod version;
 
 #[cfg(test)]

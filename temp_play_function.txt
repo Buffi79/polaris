@@ -1,0 +1,22 @@
+async function play() {
+	const songs = await listSongs();
+	
+	// Use audio routing service for the first track
+	if (songs.length > 0) {
+		// Check if we should use Sonos
+		if (audioRoutingService.shouldUseSonos) {
+			// Play first track on Sonos
+			const success = await audioRoutingService.playTrack(songs[0]);
+			if (success) {
+				console.log(`Playing album "${props.albumKey.name}" on Sonos via ${audioRoutingService.currentOutputDevice}`);
+				return;
+			}
+			// If Sonos fails, fallback to local playback below
+		}
+	}
+	
+	// Local playback (original logic)
+	playback.clear();
+	playback.stop();
+	playback.queueTracks(songs);
+}

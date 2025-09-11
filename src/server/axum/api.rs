@@ -19,10 +19,9 @@ use crate::{
 		dto, error::APIError, APIMajorVersion, API_ARRAY_SEPARATOR, API_MAJOR_VERSION,
 		API_MINOR_VERSION,
 	},
-	sonos::{SonosSpeaker, PlayTrackRequest, SonosResponse, SonosState, SonosService},
 };
 
-use super::auth::{AdminRights, Auth};
+use super::{auth::{AdminRights, Auth}};
 
 pub fn router() -> OpenApiRouter<App> {
 	OpenApiRouter::new()
@@ -67,9 +66,8 @@ pub fn router() -> OpenApiRouter<App> {
 		.routes(routes!(get_peaks))
 		.routes(routes!(get_thumbnail))
 		// Sonos
-		.routes(routes!(post_sonos_play))
-		.routes(routes!(get_sonos_speakers))
-		.routes(routes!(get_sonos_state))
+		.nest("/sonos", super::sonos_api::router())
+		// Layers
 		.layer(CompressionLayer::new().quality(CompressionLevel::Fastest))
 		.layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
 		// Uncompressed
@@ -1216,91 +1214,4 @@ async fn get_thumbnail(
 	let range = range.map(|TypedHeader(r)| r);
 	Ok(Ranged::new(range, body))
 }
-
-// === Sonos endpoints ===
-
-#[utoipa::path(
-    get,
-    path = "/sonos/speakers",
-    tag = "Sonos",
-    description = "List available Sonos speakers from node-sonos-http-api.",
-    security(("auth_token" = []), ("auth_query_param" = [])),
-    responses((status = 200, body = [SonosSpeaker]))
-)]
-async fn get_sonos_speakers(
-    _auth: Auth,
-    State(config_manager): State<config::Manager>
-) -> Result<Json<Vec<SonosSpeaker>>, APIError> {
-    let base_url = config_manager.get_sonos_api_url().await
-        .unwrap_or_else(|| "http://192.168.0.5:5005".to_string());
-
-    let service = SonosService::new(base_url);
-    let speakers = service
-        .get_speakers()
-        .await
-        .map_err(|_| APIError::Internal)?;
-    Ok(Json(speakers))
-}
-
-#[utoipa::path(
-    post,
-    path = "/sonos/play",
-    tag = "Sonos",
-    description = "Play a track URL on a specific Sonos speaker via node-sonos-http-api.",
-    security(("auth_token" = []), ("auth_query_param" = [])),
-    request_body = PlayTrackRequest,
-    responses((status = 200, body = SonosResponse))
-)]
-async fn post_sonos_play(
-    _auth: Auth,
-    State(config_manager): State<config::Manager>,
-    Json(req): Json<PlayTrackRequest>,
-) -> Result<Json<SonosResponse>, APIError> {
-    let base_url = config_manager.get_sonos_api_url().await
-        .unwrap_or_else(|| "http://192.168.0.5:5005".to_string());
-
-    let service = SonosService::new(base_url);
-    let mp3_server = config_manager.get_sonos_mp3_server().await
-        .unwrap_or_else(|| "http://192.168.0.5:5005".to_string());
-
-    let res = service
-        .play_track(&req.speaker_id, &req.track_url, &mp3_server)
-        .await
-        .map_err(|_| APIError::Internal)?;
-    Ok(Json(res))
-}
-
-#[utoipa::path(
-    get,
-    path = "/sonos/state/{speaker_id}",
-    tag = "Sonos",
-    description = "Get the current playback state of a specific Sonos speaker via node-sonos-http-api.",
-    security(("auth_token" = []), ("auth_query_param" = [])),
-    params(
-        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
-    ),
-    responses(
-        (status = 200, body = SonosState),
-        (status = 404, description = "Speaker not found or Sonos service unavailable")
-    )
-)]
-async fn get_sonos_state(
-    _auth: Auth,
-    State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
-) -> Result<Json<SonosState>, APIError> {
-    let base_url = config_manager.get_sonos_api_url().await
-       .unwrap_or_else(|| "http://192.168.0.5:5005".to_string());
-
-
-    let service = SonosService::new(base_url);
-    let state = service
-        .get_state(&speaker_id)
-        .await
-        .map_err(|_| APIError::Internal)?;
-    
-    Ok(Json(state))
-}
-
-
 
