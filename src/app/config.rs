@@ -14,6 +14,7 @@ use crate::app::Error;
 
 mod mounts;
 pub mod storage;
+mod sonos;
 mod user;
 
 pub use mounts::*;
@@ -26,6 +27,7 @@ pub struct Config {
 	pub album_art_pattern: Option<Regex>,
 	pub ddns_update_url: Option<http::Uri>,
 	pub sonos_api_url: Option<String>,
+	pub sonos_mp3_server: Option<String>,
 	pub mount_dirs: Vec<MountDir>,
 	pub users: Vec<User>,
 }
@@ -51,6 +53,7 @@ impl TryFrom<storage::Config> for Config {
 		};
 
 		config.sonos_api_url = c.sonos_api_url;
+		config.sonos_mp3_server = c.sonos_mp3_server;
 
 		Ok(config)
 	}
@@ -63,6 +66,7 @@ impl From<Config> for storage::Config {
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
 			ddns_update_url: c.ddns_update_url.map(|u| u.to_string()),
 			sonos_api_url: c.sonos_api_url,
+			sonos_mp3_server: c.sonos_mp3_server,
 			users: c.users.into_iter().map(|u| u.into()).collect(),
 		}
 	}
@@ -134,7 +138,7 @@ impl Manager {
 		Ok(manager)
 	}
 
-	pub fn on_config_change(&self) -> Notified {
+	pub fn on_config_change(&self) -> Notified<'_> {
 		self.change_notify.notified()
 	}
 
@@ -208,6 +212,10 @@ impl Manager {
 
 	pub async fn get_sonos_api_url(&self) -> Option<String> {
 		self.config.read().await.sonos_api_url.clone()
+	}
+
+	pub async fn get_sonos_mp3_server(&self) -> Option<String> {
+		self.config.read().await.sonos_mp3_server.clone()
 	}
 
 	pub async fn set_ddns_update_url(&self, url: Option<http::Uri>) -> Result<(), Error> {

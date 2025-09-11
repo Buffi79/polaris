@@ -29,6 +29,8 @@ pub struct Config {
 	pub ddns_update_url: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub sonos_api_url: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub sonos_mp3_server: Option<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub users: Vec<User>,
 }

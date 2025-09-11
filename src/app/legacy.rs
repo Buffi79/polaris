@@ -38,6 +38,7 @@ pub fn read_legacy_config(
 		mount_dirs,
 		ddns_update_url: None,
 		sonos_api_url: None,
+		sonos_mp3_server: None,
 		users: users.into_values().collect(),
 	}))
 }
