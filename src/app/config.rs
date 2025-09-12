@@ -225,6 +225,20 @@ impl Manager {
 		.await
 	}
 
+	pub async fn set_sonos_api_url(&self, url: String) -> Result<(), Error> {
+		self.mutate(|c| {
+			c.sonos_api_url = Some(url);
+		})
+		.await
+	}
+
+	pub async fn set_sonos_mp3_server(&self, url: String) -> Result<(), Error> {
+		self.mutate(|c| {
+			c.sonos_mp3_server = Some(url);
+		})
+		.await
+	}
+
 	pub async fn get_users(&self) -> Vec<User> {
 		self.config.read().await.users.to_vec()
 	}

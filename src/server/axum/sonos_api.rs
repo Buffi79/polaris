@@ -1,12 +1,13 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path as AxumPath, State},
     Json,
 };
+use std::path::Path;
 use utoipa_axum::routes;
 
 use crate::{
     app::{config, App}, 
-    server::{dto::{self, SonosModeCommand, SonosSeekBody, SonosSetVolumeBody, SonosTransportCommand, SonosVolumeCommand}, error::APIError},
+    server::{dto::{SonosModeCommand, SonosSeekBody, SonosSetVolumeBody, SonosTransportCommand, SonosVolumeCommand, sonos_settings::SonosSettings}, error::APIError},
     sonos::{PlayTrackRequest, SonosResponse, SonosService, SonosSpeaker, SonosState},
 };
 
@@ -26,7 +27,8 @@ pub fn router() -> utoipa_axum::router::OpenApiRouter<App> {
         .routes(routes!(post_seek))
         .routes(routes!(post_next_track))
         .routes(routes!(post_previous_track))
-
+        .routes(routes!(get_sonos_settings)) // Add this
+        .routes(routes!(put_sonos_settings)) // Add this
 }
 
 #[utoipa::path(
@@ -79,12 +81,96 @@ async fn post_sonos_play(
         .await
         .unwrap_or_else(|| DEFAULT_SONOS_MP3_SERVER.to_string());
 
+    let track_path = req.track_url.split("/audio/").nth(1)
+        .ok_or_else(|| APIError::BadRequest(Some("Invalid track_url format: missing /audio/ segment".to_string())))?;
+    
+    let decoded_track_path = urlencoding::decode(track_path)
+        .map_err(|_| APIError::BadRequest(Some("Invalid track_url format: bad encoding".to_string())))?
+        .into_owned();
+
+    let path = Path::new(&decoded_track_path);
+    let mut components = path.components();
+    
+    let mount_name = components.next()
+        .and_then(|c| c.as_os_str().to_str())
+        .ok_or_else(|| APIError::BadRequest(Some("Invalid track path: can't find mount name".to_string())))?;
+
+    let mounts = config_manager.get_mounts().await;
+    let mount = mounts.iter().find(|m| m.name == mount_name);
+
+    let sonos_track_path = if let Some(mount) = mount {
+        Path::new(&mount.source)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|location_folder| Path::new(location_folder).join(components.as_path()).to_string_lossy().into_owned())
+            .unwrap_or_else(|| components.as_path().to_string_lossy().into_owned())
+    } else {
+        components.as_path().to_string_lossy().into_owned()
+    };
 
     let res = service
-        .play_track(&req.speaker_id, &req.track_url, &mp3_server)
+        .play_track(&req.speaker_id, &sonos_track_path, &mp3_server)
         .await
         .map_err(|_| APIError::Internal)?;
     Ok(Json(res))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/settings/sonos",
+    tag = "Settings", // New tag for settings
+    description = "Get current Sonos settings.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    responses((status = 200, body = SonosSettings))
+)]
+async fn get_sonos_settings(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+) -> Result<Json<SonosSettings>, APIError> {
+    let http_api_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| "".to_string()); // Return empty string if not set
+
+    let mp3_server_url = config_manager
+        .get_sonos_mp3_server()
+        .await
+        .unwrap_or_else(|| "".to_string()); // Return empty string if not set
+
+    Ok(Json(SonosSettings {
+        http_api_url,
+        mp3_server_url,
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/settings/sonos",
+    tag = "Settings", // New tag for settings
+    description = "Update Sonos settings.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    request_body = SonosSettings,
+    responses((status = 200, body = SonosResponse)) // Assuming SonosResponse is suitable for success
+)]
+async fn put_sonos_settings(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Json(settings): Json<SonosSettings>,
+) -> Result<Json<SonosResponse>, APIError> {
+    config_manager
+        .set_sonos_api_url(settings.http_api_url)
+        .await
+        .map_err(|_| APIError::Internal)?;
+
+    config_manager
+        .set_sonos_mp3_server(settings.mp3_server_url)
+        .await
+        .map_err(|_| APIError::Internal)?;
+
+    Ok(Json(SonosResponse {
+        success: true,
+        message: "Sonos settings updated successfully".to_string(),
+    }))
 }
 
 #[utoipa::path(
@@ -104,7 +190,7 @@ async fn post_sonos_play(
 async fn get_sonos_state(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
 ) -> Result<Json<SonosState>, APIError> {
     let base_url = config_manager
         .get_sonos_api_url()
@@ -135,7 +221,7 @@ async fn get_sonos_state(
 async fn post_transport_command(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
     Json(command): Json<SonosTransportCommand>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
@@ -175,7 +261,7 @@ async fn post_transport_command(
 async fn post_next_track(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
         .get_sonos_api_url()
@@ -204,7 +290,7 @@ async fn post_next_track(
 async fn post_previous_track(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
         .get_sonos_api_url()
@@ -233,7 +319,7 @@ async fn post_previous_track(
 async fn post_toggle_play_pause(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
         .get_sonos_api_url()
@@ -263,7 +349,7 @@ async fn post_toggle_play_pause(
 async fn post_volume_command(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
     Json(command): Json<SonosVolumeCommand>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
@@ -302,7 +388,7 @@ async fn post_volume_command(
 async fn post_set_volume(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
     Json(body): Json<SonosSetVolumeBody>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
@@ -333,7 +419,7 @@ async fn post_set_volume(
 async fn post_seek(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
     Json(body): Json<SonosSeekBody>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
@@ -365,7 +451,7 @@ async fn post_seek(
 async fn post_mode_command(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-    Path(speaker_id): Path<String>,
+    AxumPath(speaker_id): AxumPath<String>,
     Json(command): Json<SonosModeCommand>,
 ) -> Result<Json<SonosResponse>, APIError> {
     let base_url = config_manager
