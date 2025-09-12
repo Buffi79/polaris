@@ -7,6 +7,7 @@ impl IntoResponse for APIError {
 	fn into_response(self) -> Response {
 		let message = self.to_string();
 		let status_code = match self {
+			APIError::BadRequest(_) => StatusCode::BAD_REQUEST,
 			APIError::InvalidAPIVersionHeader => StatusCode::BAD_REQUEST,
 			APIError::APIVersionHeaderParseError => StatusCode::BAD_REQUEST,
 			APIError::UnsupportedAPIVersion => StatusCode::NOT_ACCEPTABLE,

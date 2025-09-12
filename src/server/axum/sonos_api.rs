@@ -6,7 +6,7 @@ use utoipa_axum::routes;
 
 use crate::{
     app::{config, App},
-    server::{dto, error::APIError},
+    server::{dto::{self, SonosModeCommand, SonosTransportCommand, SonosVolumeCommand}, error::APIError},
     sonos::{PlayTrackRequest, SonosResponse, SonosService, SonosSpeaker, SonosState},
 };
 
@@ -18,6 +18,10 @@ pub fn router() -> utoipa_axum::router::OpenApiRouter<App> {
         .routes(routes!(get_sonos_speakers))
         .routes(routes!(post_sonos_play))
         .routes(routes!(get_sonos_state))
+        .routes(routes!(post_transport_command))
+        .routes(routes!(post_volume_command))
+        .routes(routes!(post_mode_command))
+
 }
 
 #[utoipa::path(
@@ -109,4 +113,132 @@ async fn get_sonos_state(
         .map_err(|_| APIError::Internal)?;
 
     Ok(Json(state))
+}
+
+#[utoipa::path(
+    post,
+    path = "/{speaker_id}/transport",
+    tag = "Sonos",
+    description = "Send a transport command to a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    request_body = SonosTransportCommand,
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_transport_command(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+    Json(command): Json<SonosTransportCommand>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+
+    let result = match command.command.as_str() {
+        "play" => service.play(&speaker_id).await,
+        "pause" => service.pause(&speaker_id).await,
+        "next" => service.next(&speaker_id).await,
+        "previous" => service.previous(&speaker_id).await,
+        _ => {
+            return Err(APIError::BadRequest(Some(
+                "Invalid transport command".to_string(),
+            )))
+        }
+    };
+
+    let response = result.map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    post,
+    path = "/{speaker_id}/volume",
+    tag = "Sonos",
+    description = "Send a volume command to a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    request_body = SonosVolumeCommand,
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_volume_command(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+    Json(command): Json<SonosVolumeCommand>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+
+    let result = match command.action.as_str() {
+        "up" => service.volume_up(&speaker_id, command.value.unwrap_or(5)).await,
+        "down" => service.volume_down(&speaker_id, command.value.unwrap_or(5)).await,
+        "set" => {
+            if let Some(level) = command.value {
+                service.set_volume(&speaker_id, level).await
+            } else {
+                return Err(APIError::BadRequest(Some(
+                    "Missing volume level for set command".to_string(),
+                )));
+            }
+        }
+        _ => {
+            return Err(APIError::BadRequest(Some(
+                "Invalid volume command".to_string(),
+            )))
+        }
+    };
+
+    let response = result.map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    post,
+    path = "/{speaker_id}/mode",
+    tag = "Sonos",
+    description = "Send a mode command to a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    request_body = SonosModeCommand,
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_mode_command(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+    Json(command): Json<SonosModeCommand>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+
+    let result = match command.command.as_str() {
+        "toggle_repeat" => service.toggle_repeat(&speaker_id).await,
+        "toggle_shuffle" => service.toggle_shuffle(&speaker_id).await,
+        _ => {
+            return Err(APIError::BadRequest(Some(
+                "Invalid mode command".to_string(),
+            )))
+        }
+    };
+
+    let response = result.map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
 }

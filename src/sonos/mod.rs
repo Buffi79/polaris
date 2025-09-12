@@ -72,6 +72,69 @@ impl SonosService {
         }
     }
 
+    async fn send_command(&self, speaker_id: &str, command: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        let url = format!("{}/{}/{}", self.base_url, speaker_id, command);
+        match self.client.get(&url).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    Ok(SonosResponse {
+                        success: true,
+                        message: format!("Successfully sent command '{}' to speaker '{}'", command, speaker_id),
+                    })
+                } else {
+                    let status = response.status();
+                    let text = response.text().await.unwrap_or_default();
+                    Ok(SonosResponse {
+                        success: false,
+                        message: format!("HTTP error {}: {}", status, text),
+                    })
+                }
+            }
+            Err(e) => {
+                Ok(SonosResponse {
+                    success: false,
+                    message: format!("Connection error: {}", e),
+                })
+            }
+        }
+    }
+
+    pub async fn play(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, "play").await
+    }
+
+    pub async fn pause(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, "pause").await
+    }
+
+    pub async fn next(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, "next").await
+    }
+
+    pub async fn previous(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, "previous").await
+    }
+
+    pub async fn toggle_repeat(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, "repeat/toggle").await
+    }
+
+    pub async fn toggle_shuffle(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, "shuffle").await
+    }
+
+    pub async fn volume_up(&self, speaker_id: &str, increment: u8) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, &format!("volume/+{}", increment)).await
+    }
+
+    pub async fn volume_down(&self, speaker_id: &str, decrement: u8) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, &format!("volume/-{}", decrement)).await
+    }
+
+    pub async fn set_volume(&self, speaker_id: &str, level: u8) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, &format!("volume/{}", level)).await
+    }
+
     /// Get all available Sonos speakers
     pub async fn get_speakers(&self) -> Result<Vec<SonosSpeaker>, Box<dyn std::error::Error>> {
         let url = format!("{}/zones", self.base_url);
