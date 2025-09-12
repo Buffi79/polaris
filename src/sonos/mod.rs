@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use log::{info, warn};
 
 use utoipa::ToSchema;
 
@@ -84,6 +85,7 @@ impl SonosService {
                 } else {
                     let status = response.status();
                     let text = response.text().await.unwrap_or_default();
+                    warn!("Error from Sonos API for command '{}' on speaker '{}'. Status: {}, Body: {}", command, speaker_id, status, text);
                     Ok(SonosResponse {
                         success: false,
                         message: format!("HTTP error {}: {}", status, text),
@@ -123,6 +125,15 @@ impl SonosService {
         self.send_command(speaker_id, "shuffle").await
     }
 
+    pub async fn toggle_play_pause(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        let state = self.get_state(speaker_id).await?;
+        if state.is_playing {
+            self.pause(speaker_id).await
+        } else {
+            self.play(speaker_id).await
+        }
+    }
+
     pub async fn volume_up(&self, speaker_id: &str, increment: u8) -> Result<SonosResponse, Box<dyn std::error::Error>> {
         self.send_command(speaker_id, &format!("volume/+{}", increment)).await
     }
@@ -133,6 +144,10 @@ impl SonosService {
 
     pub async fn set_volume(&self, speaker_id: &str, level: u8) -> Result<SonosResponse, Box<dyn std::error::Error>> {
         self.send_command(speaker_id, &format!("volume/{}", level)).await
+    }
+
+    pub async fn seek(&self, speaker_id: &str, position_secs: u32) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        self.send_command(speaker_id, &format!("seek/{}", position_secs)).await
     }
 
     /// Get all available Sonos speakers
@@ -198,18 +213,16 @@ impl SonosService {
                          speaker_id, 
                          urlencoding::encode(&cifs_uri));
         
-        println!("Sonos play URL: {}", url);
+        info!("Sonos play URL: {}", url);
         
         match self.client.post(&url).send().await {
             Ok(response) => {
                 if response.status().is_success() {
-                    Ok(SonosResponse {
-                        success: true,
-                        message: "Track started playing on Sonos".to_string(),
-                    })
+                    self.play(speaker_id).await
                 } else {
                     let status = response.status();
                     let text = response.text().await.unwrap_or_default();
+                    warn!("Error from Sonos API on play_track for speaker '{}'. Status: {}, Body: {}", speaker_id, status, text);
                     Ok(SonosResponse {
                         success: false,
                         message: format!("HTTP error {}: {}", status, text),

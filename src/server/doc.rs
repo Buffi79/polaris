@@ -43,6 +43,10 @@ pub fn open_api() -> OpenApi {
 			.name("Playlists")
 			.description(Some("These endpoints allow users to create, retrieve, update or delete playlists."))
 			.build(),
+            TagBuilder::new()
+			.name("Sonos")
+			.description(Some("These endpoints allow users to control Sonos speakers via a node-sonos-http-api instance."))
+			.build(),
         ]))
 		.components(Some(
 			ComponentsBuilder::new()

@@ -5,8 +5,8 @@ use axum::{
 use utoipa_axum::routes;
 
 use crate::{
-    app::{config, App},
-    server::{dto::{self, SonosModeCommand, SonosTransportCommand, SonosVolumeCommand}, error::APIError},
+    app::{config, App}, 
+    server::{dto::{self, SonosModeCommand, SonosSeekBody, SonosSetVolumeBody, SonosTransportCommand, SonosVolumeCommand}, error::APIError},
     sonos::{PlayTrackRequest, SonosResponse, SonosService, SonosSpeaker, SonosState},
 };
 
@@ -18,9 +18,14 @@ pub fn router() -> utoipa_axum::router::OpenApiRouter<App> {
         .routes(routes!(get_sonos_speakers))
         .routes(routes!(post_sonos_play))
         .routes(routes!(get_sonos_state))
+        .routes(routes!(post_toggle_play_pause))
         .routes(routes!(post_transport_command))
         .routes(routes!(post_volume_command))
+        .routes(routes!(post_set_volume))
         .routes(routes!(post_mode_command))
+        .routes(routes!(post_seek))
+        .routes(routes!(post_next_track))
+        .routes(routes!(post_previous_track))
 
 }
 
@@ -158,6 +163,93 @@ async fn post_transport_command(
 
 #[utoipa::path(
     post,
+    path = "/next/{speaker_id}",
+    tag = "Sonos",
+    description = "Skip to the next track on a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_next_track(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+    let response = service
+        .next(&speaker_id)
+        .await
+        .map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    post,
+    path = "/previous/{speaker_id}",
+    tag = "Sonos",
+    description = "Skip to the previous track on a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_previous_track(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+    let response = service
+        .previous(&speaker_id)
+        .await
+        .map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    post,
+    path = "/play_pause/{speaker_id}",
+    tag = "Sonos",
+    description = "Toggle play/pause on a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_toggle_play_pause(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+    let response = service
+        .toggle_play_pause(&speaker_id)
+        .await
+        .map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    post,
     path = "/{speaker_id}/volume",
     tag = "Sonos",
     description = "Send a volume command to a Sonos speaker.",
@@ -184,15 +276,6 @@ async fn post_volume_command(
     let result = match command.action.as_str() {
         "up" => service.volume_up(&speaker_id, command.value.unwrap_or(5)).await,
         "down" => service.volume_down(&speaker_id, command.value.unwrap_or(5)).await,
-        "set" => {
-            if let Some(level) = command.value {
-                service.set_volume(&speaker_id, level).await
-            } else {
-                return Err(APIError::BadRequest(Some(
-                    "Missing volume level for set command".to_string(),
-                )));
-            }
-        }
         _ => {
             return Err(APIError::BadRequest(Some(
                 "Invalid volume command".to_string(),
@@ -203,6 +286,69 @@ async fn post_volume_command(
     let response = result.map_err(|_| APIError::Internal)?;
     Ok(Json(response))
 }
+
+#[utoipa::path(
+    post,
+    path = "/volume/{speaker_id}",
+    tag = "Sonos",
+    description = "Set the volume on a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    request_body = SonosSetVolumeBody,
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_set_volume(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+    Json(body): Json<SonosSetVolumeBody>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+    let response = service
+        .set_volume(&speaker_id, body.volume)
+        .await
+        .map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    post,
+    path = "/seek/{speaker_id}",
+    tag = "Sonos",
+    description = "Seek to a position in the current track on a Sonos speaker.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    params(
+        ("speaker_id", example = "Living Room", description = "The ID/name of the Sonos speaker")
+    ),
+    request_body = SonosSeekBody,
+    responses((status = 200, body = SonosResponse))
+)]
+async fn post_seek(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Path(speaker_id): Path<String>,
+    Json(body): Json<SonosSeekBody>,
+) -> Result<Json<SonosResponse>, APIError> {
+    let base_url = config_manager
+        .get_sonos_api_url()
+        .await
+        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
+
+    let service = SonosService::new(base_url);
+    let response = service
+        .seek(&speaker_id, body.position)
+        .await
+        .map_err(|_| APIError::Internal)?;
+    Ok(Json(response))
+}
+
 
 #[utoipa::path(
     post,
