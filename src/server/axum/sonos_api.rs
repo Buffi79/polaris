@@ -56,6 +56,8 @@ async fn get_sonos_speakers(
     Ok(Json(speakers))
 }
 
+// Ersetze die gesamte post_sonos_play Funktion durch diese Debug-Version:
+
 #[utoipa::path(
     post,
     path = "/play",
@@ -70,119 +72,171 @@ async fn post_sonos_play(
     State(config_manager): State<config::Manager>,
     Json(req): Json<PlayTrackRequest>,
 ) -> Result<Json<SonosResponse>, APIError> {
-    use log::info;
+    use log::{info, warn, error};
     
-    info!("Sonos play request received: speaker_id='{}', track_url='{}'", req.speaker_id, req.track_url);
+    error!("DEBUG: post_sonos_play function started!");
+    info!("DEBUG: Sonos play request received: speaker_id='{}', track_url='{}'", req.speaker_id, req.track_url);
     
-    let base_url = config_manager
-        .get_sonos_api_url()
-        .await
-        .unwrap_or_else(|| DEFAULT_SONOS_API_URL.to_string());
-    
-    info!("Sonos base_url: {}", base_url);
-
-    let service = SonosService::new(base_url);
-    let mp3_server = config_manager
-        .get_sonos_mp3_server()
-        .await
-        .unwrap_or_else(|| DEFAULT_SONOS_MP3_SERVER.to_string());
-    
-    info!("MP3 server: {}", mp3_server);
-
-    // Extract the track path from the request
-    // Handle two formats:
-    // 1. Full URL: http://localhost:5050/api/audio/Test%2FTiziano_Ferro%2F...
-    // 2. Direct path: Test/Tiziano_Ferro/Nessuno e solo/04_-_Stop_dimentica.mp3
-    let decoded_track_path = if req.track_url.contains("/audio/") {
-        info!("Processing as full URL format");
-        // Format 1: Extract from full URL
-        let track_path = req.track_url.split("/audio/").nth(1)
-            .ok_or_else(|| {
-                info!("Error: Could not extract path after /audio/ from: {}", req.track_url);
-                APIError::BadRequest(Some("Invalid track_url format: missing /audio/ segment".to_string()))
-            })?;
-        
-        urlencoding::decode(track_path)
-            .map_err(|e| {
-                info!("Error: Could not decode track path '{}': {}", track_path, e);
-                APIError::BadRequest(Some("Invalid track_url format: bad encoding".to_string()))
-            })?
-            .into_owned()
-    } else {
-        info!("Processing as direct path format");
-        // Format 2: Direct path - decode in case it's URL encoded
-        urlencoding::decode(&req.track_url)
-            .map_err(|e| {
-                info!("Error: Could not decode direct path '{}': {}", req.track_url, e);
-                APIError::BadRequest(Some("Invalid track path format: bad encoding".to_string()))
-            })?
-            .into_owned()
+    let base_url = match config_manager.get_sonos_api_url().await {
+        Some(url) => {
+            info!("DEBUG: Got Sonos API URL from config: {}", url);
+            url
+        },
+        None => {
+            let default_url = DEFAULT_SONOS_API_URL.to_string();
+            info!("DEBUG: Using default Sonos API URL: {}", default_url);
+            default_url
+        }
     };
 
-    info!("Decoded track path: {}", decoded_track_path);
+    let mp3_server = match config_manager.get_sonos_mp3_server().await {
+        Some(server) => {
+            info!("DEBUG: Got MP3 server from config: {}", server);
+            server
+        },
+        None => {
+            let default_server = DEFAULT_SONOS_MP3_SERVER.to_string();
+            info!("DEBUG: Using default MP3 server: {}", default_server);
+            default_server
+        }
+    };
 
-    // Parse the path to get mount name and file path
+    info!("DEBUG: About to process track_url format");
+
+    // Handle both URL formats with extensive logging
+    let decoded_track_path = if req.track_url.contains("/audio/") {
+        info!("DEBUG: Processing as full URL format");
+        
+        match req.track_url.split("/audio/").nth(1) {
+            Some(track_path) => {
+                info!("DEBUG: Extracted track path: {}", track_path);
+                
+                match urlencoding::decode(track_path) {
+                    Ok(decoded) => {
+                        let result = decoded.into_owned();
+                        info!("DEBUG: URL decoded successfully: {}", result);
+                        result
+                    },
+                    Err(e) => {
+                        error!("DEBUG: Failed to decode track path '{}': {}", track_path, e);
+                        return Err(APIError::BadRequest(Some("Invalid track_url format: bad encoding".to_string())));
+                    }
+                }
+            },
+            None => {
+                error!("DEBUG: Could not extract path after /audio/ from: {}", req.track_url);
+                return Err(APIError::BadRequest(Some("Invalid track_url format: missing /audio/ segment".to_string())));
+            }
+        }
+    } else {
+        info!("DEBUG: Processing as direct path format");
+        
+        match urlencoding::decode(&req.track_url) {
+            Ok(decoded) => {
+                let result = decoded.into_owned();
+                info!("DEBUG: Direct path decoded successfully: {}", result);
+                result
+            },
+            Err(e) => {
+                error!("DEBUG: Failed to decode direct path '{}': {}", req.track_url, e);
+                return Err(APIError::BadRequest(Some("Invalid track path format: bad encoding".to_string())));
+            }
+        }
+    };
+
+    info!("DEBUG: Final decoded_track_path: {}", decoded_track_path);
+
+    // Parse path components
     let path = Path::new(&decoded_track_path);
     let mut components = path.components();
     
-    let mount_name = components.next()
-        .and_then(|c| c.as_os_str().to_str())
-        .ok_or_else(|| {
-            info!("Error: Could not extract mount name from path: {}", decoded_track_path);
-            APIError::BadRequest(Some("Invalid track path: can't find mount name".to_string()))
-        })?;
+    let mount_name = match components.next() {
+        Some(component) => {
+            match component.as_os_str().to_str() {
+                Some(name) => {
+                    info!("DEBUG: Mount name extracted: {}", name);
+                    name
+                },
+                None => {
+                    error!("DEBUG: Could not convert mount name component to string");
+                    return Err(APIError::BadRequest(Some("Invalid track path: mount name not UTF-8".to_string())));
+                }
+            }
+        },
+        None => {
+            error!("DEBUG: No components found in path: {}", decoded_track_path);
+            return Err(APIError::BadRequest(Some("Invalid track path: empty path".to_string())));
+        }
+    };
 
-    info!("Mount name extracted: {}", mount_name);
-
-    // Get mount configuration to map mount name to the actual path structure needed for Sonos
+    info!("DEBUG: About to get mounts from config");
     let mounts = config_manager.get_mounts().await;
-    info!("Available mounts: {:?}", mounts);
+    info!("DEBUG: Got {} mounts from config", mounts.len());
+    for mount in &mounts {
+        info!("DEBUG: Available mount - name: '{}', source: '{}'", mount.name, mount.source.display());
+    }
     
     let mount = mounts.iter().find(|m| m.name == mount_name);
 
-    // Construct the final track path for Sonos
-    // Based on your configuration, we need to replace the mount name with the actual folder name
-    let sonos_track_path = if let Some(mount) = mount {
-        info!("Found mount: name='{}', source='{}'", mount.name, mount.source.display());
-        
-        // Get the last component of the mount source (e.g., "Italiano" from "/mnt/mp3/Italiano")
-        let mount_folder = Path::new(&mount.source)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(mount_name); // fallback to mount name if we can't get folder name
-        
-        info!("Mount folder extracted: {}", mount_folder);
-        
-        // Replace mount name with the actual folder name
-        // "Test/Tiziano_Ferro/..." becomes "Italiano/Tiziano_Ferro/..."
-        let constructed_path = Path::new(mount_folder)
-            .join(components.as_path())
-            .to_string_lossy()
-            .into_owned();
-        
-        info!("Constructed Sonos path: {}", constructed_path);
-        constructed_path
-    } else {
-        info!("Mount not found, using path as-is: {}", decoded_track_path);
-        // If mount not found, use the path as-is (fallback)
-        decoded_track_path
+    let sonos_track_path = match mount {
+        Some(mount) => {
+            info!("DEBUG: Found matching mount: name='{}', source='{}'", mount.name, mount.source.display());
+            
+            let mount_folder = match Path::new(&mount.source).file_name() {
+                Some(name) => {
+                    match name.to_str() {
+                        Some(folder) => {
+                            info!("DEBUG: Mount folder extracted: {}", folder);
+                            folder
+                        },
+                        None => {
+                            warn!("DEBUG: Mount folder name not UTF-8, using mount name as fallback");
+                            mount_name
+                        }
+                    }
+                },
+                None => {
+                    warn!("DEBUG: Could not get file name from mount source, using mount name as fallback");
+                    mount_name
+                }
+            };
+            
+            let constructed_path = Path::new(mount_folder)
+                .join(components.as_path())
+                .to_string_lossy()
+                .into_owned();
+            
+            info!("DEBUG: Constructed Sonos path: {}", constructed_path);
+            constructed_path
+        },
+        None => {
+            warn!("DEBUG: Mount '{}' not found, using path as-is: {}", mount_name, decoded_track_path);
+            decoded_track_path
+        }
     };
 
-    info!("Final sonos_track_path: {}", sonos_track_path);
+    info!("DEBUG: Final sonos_track_path: {}", sonos_track_path);
+    info!("DEBUG: About to create SonosService with base_url: {}", base_url);
 
-    // The SonosService::play_track expects the track_url parameter to be the track path we constructed
-    // Let's pass the constructed path as track_url since the service method will process it further
-    let res = service
-        .play_track(&req.speaker_id, &sonos_track_path, &mp3_server)
-        .await
-        .map_err(|e| {
-            info!("Error calling SonosService::play_track: {:?}", e);
-            APIError::Internal
-        })?;
-    
-    info!("SonosService response: {:?}", res);
-    Ok(Json(res))
+    let service = SonosService::new(base_url);
+
+    info!("DEBUG: About to call service.play_track");
+    info!("DEBUG: Parameters - speaker_id: '{}', track_path: '{}', mp3_server: '{}'", 
+          req.speaker_id, sonos_track_path, mp3_server);
+
+    match service.play_track(&req.speaker_id, &sonos_track_path, &mp3_server).await {
+        Ok(response) => {
+            info!("DEBUG: SonosService::play_track returned successfully");
+            info!("DEBUG: Response - success: {}, message: '{}'", response.success, response.message);
+            Ok(Json(response))
+        },
+        Err(e) => {
+            error!("DEBUG: SonosService::play_track failed with error: {:?}", e);
+            Err(APIError::Internal)
+        }
+    }
 }
+
 
 #[utoipa::path(
     get,

@@ -190,53 +190,82 @@ impl SonosService {
         }
     }
 
-    /// Play a track on a specific Sonos speaker
-    /// Converts Polaris URLs to CIFS paths for node-sonos-http-api
-    pub async fn play_track(&self, speaker_id: &str, track_url: &str, file_server: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
-        // Extract track path from Polaris URL
-        // Example: http://localhost:5050/api/v8/audio/Test%2FKinderlieder%2FTest.mp3
-        // Extract: Test/Kinderlieder/Test.mp3
-        
-        let track_path = if let Some(path_part) = track_url.split("/audio/").nth(1) {
-            urlencoding::decode(path_part)?.to_string()
-        } else {
-            // Fallback: use the URL as-is if we can't extract the path
-            track_url.to_string()
-        };
-        
-        // Construct CIFS path: x-file-cifs://192.168.0.6/mp3/Test/Kinderlieder/Test.mp3
-        let cifs_uri = format!("x-file-cifs://{}/{}", file_server, track_path);
-        
-        // node-sonos-http-api URL: http://192.168.0.5:5005/Elena/setavtransporturi/[encoded_uri]
-        let url = format!("{}/{}/setavtransporturi/{}", 
-                         self.base_url, 
-                         speaker_id, 
-                         urlencoding::encode(&cifs_uri));
-        
-        info!("Sonos play URL: {}", url);
-        
-        match self.client.post(&url).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    self.play(speaker_id).await
-                } else {
-                    let status = response.status();
-                    let text = response.text().await.unwrap_or_default();
-                    warn!("Error from Sonos API on play_track for speaker '{}'. Status: {}, Body: {}", speaker_id, status, text);
-                    Ok(SonosResponse {
-                        success: false,
-                        message: format!("HTTP error {}: {}", status, text),
-                    })
+
+/// Play a track on a specific Sonos speaker
+/// Simple direct approach that matches the working curl command
+pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+    use log::{info, warn};
+    
+    // Construct the full CIFS URI exactly as in your working curl command
+    let cifs_uri = format!("x-file-cifs://{}/{}", file_server, track_path);
+    info!("CIFS URI: {}", cifs_uri);
+    
+    // Build the full URL for the setavtransporturi command
+    let encoded_uri = urlencoding::encode(&cifs_uri);
+    let url = format!("{}/{}/setavtransporturi/{}", self.base_url, speaker_id, encoded_uri);
+    
+    info!("Sending GET to: {}", url);
+    
+    // Send GET request (not POST!) to setavtransporturi
+    let response = self.client.get(&url).send().await;
+    
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            info!("setavtransporturi response status: {}", status);
+            
+            if status.is_success() {
+                info!("Transport URI set successfully");
+                
+                // Now send the play command
+                let play_url = format!("{}/{}/play", self.base_url, speaker_id);
+                info!("Sending play command to: {}", play_url);
+                
+                match self.client.get(&play_url).send().await {
+                    Ok(play_resp) => {
+                        let play_status = play_resp.status();
+                        info!("Play command response status: {}", play_status);
+                        
+                        if play_status.is_success() {
+                            Ok(SonosResponse {
+                                success: true,
+                                message: "Track started playing successfully".to_string(),
+                            })
+                        } else {
+                            let error_text = play_resp.text().await.unwrap_or_default();
+                            warn!("Play command failed. Status: {}, Body: {}", play_status, error_text);
+                            Ok(SonosResponse {
+                                success: false,
+                                message: format!("Play command failed: HTTP {}", play_status),
+                            })
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Connection error on play command: {}", e);
+                        Ok(SonosResponse {
+                            success: false,
+                            message: format!("Connection error on play: {}", e),
+                        })
+                    }
                 }
-            }
-            Err(e) => {
+            } else {
+                let error_text = resp.text().await.unwrap_or_default();
+                warn!("setavtransporturi failed. Status: {}, Body: {}", status, error_text);
                 Ok(SonosResponse {
                     success: false,
-                    message: format!("Connection error: {}", e),
+                    message: format!("Failed to set transport URI: HTTP {} - {}", status, error_text),
                 })
             }
         }
+        Err(e) => {
+            warn!("Connection error on setavtransporturi: {}", e);
+            Ok(SonosResponse {
+                success: false,
+                message: format!("Connection error: {}", e),
+            })
+        }
     }
+}
 
     /// Get the current playback state of a Sonos speaker
     pub async fn get_state(&self, speaker_id: &str) -> Result<SonosState, Box<dyn std::error::Error>> {
