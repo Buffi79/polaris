@@ -240,7 +240,7 @@ async fn post_sonos_play(
 
 #[utoipa::path(
     get,
-    path = "/api/settings/sonos",
+    path = "/settings",
     tag = "Settings", // New tag for settings
     description = "Get current Sonos settings.",
     security(("auth_token" = []), ("auth_query_param" = [])),
@@ -268,7 +268,7 @@ async fn get_sonos_settings(
 
 #[utoipa::path(
     put,
-    path = "/api/settings/sonos",
+    path = "/settings",
     tag = "Settings", // New tag for settings
     description = "Update Sonos settings.",
     security(("auth_token" = []), ("auth_query_param" = [])),
