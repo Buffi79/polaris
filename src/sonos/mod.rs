@@ -267,6 +267,85 @@ pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: 
     }
 }
 
+
+    /// Play a playlist from a folder on a specific Sonos speaker
+    /// Similar to play_track but uses folder path + "playlist.m3u"
+    pub async fn play_playlist(&self, speaker_id: &str, folder_path: &str, file_server: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
+        use log::{info, warn};
+        
+        // Construct the playlist path by appending "playlist.m3u" to the folder path
+        let playlist_path = format!("{}/playlist.m3u", folder_path);
+        
+        // Construct the full CIFS URI exactly as in play_track
+        let cifs_uri = format!("x-file-cifs://{}/{}", file_server, playlist_path);
+        info!("Playlist CIFS URI: {}", cifs_uri);
+        
+        // Build the full URL for the setavtransporturi command
+        let encoded_uri = urlencoding::encode(&cifs_uri);
+        let url = format!("{}/{}/setavtransporturi/{}", self.base_url, speaker_id, encoded_uri);
+        
+        info!("Sending GET to: {}", url);
+        
+        // Send GET request (not POST!) to setavtransporturi
+        let response = self.client.get(&url).send().await;
+        
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                info!("setavtransporturi response status: {}", status);
+                
+                if status.is_success() {
+                    info!("Transport URI set successfully for playlist");
+                    
+                    // Now send the play command
+                    let play_url = format!("{}/{}/play", self.base_url, speaker_id);
+                    info!("Sending play command to: {}", play_url);
+                    
+                    match self.client.get(&play_url).send().await {
+                        Ok(play_resp) => {
+                            let play_status = play_resp.status();
+                            info!("Play command response status: {}", play_status);
+                            
+                            if play_status.is_success() {
+                                Ok(SonosResponse {
+                                    success: true,
+                                    message: "Playlist started playing successfully".to_string(),
+                                })
+                            } else {
+                                let error_text = play_resp.text().await.unwrap_or_default();
+                                warn!("Play command failed. Status: {}, Body: {}", play_status, error_text);
+                                Ok(SonosResponse {
+                                    success: false,
+                                    message: format!("Play command failed: HTTP {}", play_status),
+                                })
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Connection error on play command: {}", e);
+                            Ok(SonosResponse {
+                                success: false,
+                                message: format!("Connection error on play: {}", e),
+                            })
+                        }
+                    }
+                } else {
+                    let error_text = resp.text().await.unwrap_or_default();
+                    warn!("setavtransporturi failed. Status: {}, Body: {}", status, error_text);
+                    Ok(SonosResponse {
+                        success: false,
+                        message: format!("Failed to set transport URI: HTTP {} - {}", status, error_text),
+                    })
+                }
+            }
+            Err(e) => {
+                warn!("Connection error on setavtransporturi: {}", e);
+                Ok(SonosResponse {
+                    success: false,
+                    message: format!("Connection error: {}", e),
+                })
+            }
+        }
+    }
     /// Get the current playback state of a Sonos speaker
     pub async fn get_state(&self, speaker_id: &str) -> Result<SonosState, Box<dyn std::error::Error>> {
         let url = format!("{}/{}/state", self.base_url, speaker_id);

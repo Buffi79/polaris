@@ -18,6 +18,7 @@ pub fn router() -> utoipa_axum::router::OpenApiRouter<App> {
     utoipa_axum::router::OpenApiRouter::new()
         .routes(routes!(get_sonos_speakers))
         .routes(routes!(post_sonos_play))
+        .routes(routes!(post_sonos_playlist))
         .routes(routes!(get_sonos_state))
         .routes(routes!(post_toggle_play_pause))
         .routes(routes!(post_transport_command))
@@ -57,7 +58,6 @@ async fn get_sonos_speakers(
 }
 
 // Ersetze die gesamte post_sonos_play Funktion durch diese Debug-Version:
-
 #[utoipa::path(
     post,
     path = "/play",
@@ -67,6 +67,7 @@ async fn get_sonos_speakers(
     request_body = PlayTrackRequest,
     responses((status = 200, body = SonosResponse))
 )]
+
 async fn post_sonos_play(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
@@ -239,6 +240,186 @@ async fn post_sonos_play(
 
 
 #[utoipa::path(
+    post,
+    path = "/playlist",
+    tag = "Sonos",
+    description = "Play a playlist from a folder on a specific Sonos speaker via node-sonos-http-api.",
+    security(("auth_token" = []), ("auth_query_param" = [])),
+    request_body = PlayTrackRequest,
+    responses((status = 200, body = SonosResponse))
+)]
+
+async fn post_sonos_playlist(
+    _auth: Auth,
+    State(config_manager): State<config::Manager>,
+    Json(req): Json<PlayTrackRequest>,
+) -> Result<Json<SonosResponse>, APIError> {
+    use log::{info, warn, error};
+    
+    error!("DEBUG: post_sonos_playlist function started!");
+    info!("DEBUG: Sonos play request received: speaker_id='{}', track_url='{}'", req.speaker_id, req.track_url);
+    
+    let base_url = match config_manager.get_sonos_api_url().await {
+        Some(url) => {
+            info!("DEBUG: Got Sonos API URL from config: {}", url);
+            url
+        },
+        None => {
+            let default_url = DEFAULT_SONOS_API_URL.to_string();
+            info!("DEBUG: Using default Sonos API URL: {}", default_url);
+            default_url
+        }
+    };
+
+    let mp3_server = match config_manager.get_sonos_mp3_server().await {
+        Some(server) => {
+            info!("DEBUG: Got MP3 server from config: {}", server);
+            server
+        },
+        None => {
+            let default_server = DEFAULT_SONOS_MP3_SERVER.to_string();
+            info!("DEBUG: Using default MP3 server: {}", default_server);
+            default_server
+        }
+    };
+
+    info!("DEBUG: About to process track_uri format");
+
+    // Handle both URL formats with extensive logging (similar to play_track but for folders)
+    let decoded_folder_path = if req.track_url.contains("/audio/") {
+        info!("DEBUG: Processing as full URL format");
+        
+        match req.track_url.split("/audio/").nth(1) {
+            Some(folder_path) => {
+                info!("DEBUG: Extracted folder path: {}", folder_path);
+                
+                match urlencoding::decode(folder_path) {
+                    Ok(decoded) => {
+                        let result = decoded.into_owned();
+                        info!("DEBUG: URL decoded successfully: {}", result);
+                        result
+                    },
+                    Err(e) => {
+                        error!("DEBUG: Failed to decode folder path '{}': {}", folder_path, e);
+                        return Err(APIError::BadRequest(Some("Invalid track_uri format: bad encoding".to_string())));
+                    }
+                }
+            },
+            None => {
+                error!("DEBUG: Could not extract path after /audio/ from: {}", req.track_url);
+                return Err(APIError::BadRequest(Some("Invalid track_uri format: missing /audio/ segment".to_string())));
+            }
+        }
+    } else {
+        info!("DEBUG: Processing as direct path format");
+        
+        match urlencoding::decode(&req.track_url) {
+            Ok(decoded) => {
+                let result = decoded.into_owned();
+                info!("DEBUG: Direct path decoded successfully: {}", result);
+                result
+            },
+            Err(e) => {
+                error!("DEBUG: Failed to decode direct path '{}': {}", req.track_url, e);
+                return Err(APIError::BadRequest(Some("Invalid folder path format: bad encoding".to_string())));
+            }
+        }
+    };
+
+    info!("DEBUG: Final decoded_folder_path: {}", decoded_folder_path);
+
+    // Parse path components
+    let path = Path::new(&decoded_folder_path);
+    let mut components = path.components();
+    
+    let mount_name = match components.next() {
+        Some(component) => {
+            match component.as_os_str().to_str() {
+                Some(name) => {
+                    info!("DEBUG: Mount name extracted: {}", name);
+                    name
+                },
+                None => {
+                    error!("DEBUG: Could not convert mount name component to string");
+                    return Err(APIError::BadRequest(Some("Invalid folder path: mount name not UTF-8".to_string())));
+                }
+            }
+        },
+        None => {
+            error!("DEBUG: No components found in path: {}", decoded_folder_path);
+            return Err(APIError::BadRequest(Some("Invalid folder path: empty path".to_string())));
+        }
+    };
+
+    info!("DEBUG: About to get mounts from config");
+    let mounts = config_manager.get_mounts().await;
+    info!("DEBUG: Got {} mounts from config", mounts.len());
+    for mount in &mounts {
+        info!("DEBUG: Available mount - name: '{}', source: '{}'", mount.name, mount.source.display());
+    }
+    
+    let mount = mounts.iter().find(|m| m.name == mount_name);
+
+    let sonos_folder_path = match mount {
+        Some(mount) => {
+            info!("DEBUG: Found matching mount: name='{}', source='{}'", mount.name, mount.source.display());
+            
+            let mount_folder = match Path::new(&mount.source).file_name() {
+                Some(name) => {
+                    match name.to_str() {
+                        Some(folder) => {
+                            info!("DEBUG: Mount folder extracted: {}", folder);
+                            folder
+                        },
+                        None => {
+                            warn!("DEBUG: Mount folder name not UTF-8, using mount name as fallback");
+                            mount_name
+                        }
+                    }
+                },
+                None => {
+                    warn!("DEBUG: Could not get file name from mount source, using mount name as fallback");
+                    mount_name
+                }
+            };
+            
+            let constructed_path = Path::new(mount_folder)
+                .join(components.as_path())
+                .to_string_lossy()
+                .into_owned();
+            
+            info!("DEBUG: Constructed Sonos folder path: {}", constructed_path);
+            constructed_path
+        },
+        None => {
+            warn!("DEBUG: Mount '{}' not found, using path as-is: {}", mount_name, decoded_folder_path);
+            decoded_folder_path
+        }
+    };
+
+    info!("DEBUG: Final sonos_folder_path: {}", sonos_folder_path);
+    info!("DEBUG: About to create SonosService with base_url: {}", base_url);
+
+    let service = SonosService::new(base_url);
+
+    info!("DEBUG: About to call service.play_playlist");
+    info!("DEBUG: Parameters - speaker: '{}', folder_path: '{}', mp3_server: '{}'", 
+          req.speaker_id, sonos_folder_path, mp3_server);
+
+    match service.play_playlist(&req.speaker_id, &sonos_folder_path, &mp3_server).await {
+        Ok(response) => {
+            info!("DEBUG: SonosService::play_playlist returned successfully");
+            info!("DEBUG: Response - success: {}, message: '{}'", response.success, response.message);
+            Ok(Json(response))
+        },
+        Err(e) => {
+            error!("DEBUG: SonosService::play_playlist failed with error: {:?}", e);
+            Err(APIError::Internal)
+        }
+    }
+}
+
+#[utoipa::path(
     get,
     path = "/settings",
     tag = "Settings", // New tag for settings
@@ -246,6 +427,7 @@ async fn post_sonos_play(
     security(("auth_token" = []), ("auth_query_param" = [])),
     responses((status = 200, body = SonosSettings))
 )]
+
 async fn get_sonos_settings(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
