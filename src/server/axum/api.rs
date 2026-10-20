@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use axum::{
 	extract::{DefaultBodyLimit, Path, Query, State},
 	response::{IntoResponse, Response},
-	routing::{get, post},
+	routing::get,
 	Json,
 };
 use axum_extra::headers::Range;

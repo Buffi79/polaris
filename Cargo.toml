@@ -13,8 +13,6 @@ lto = "thin"
 
 [dependencies]
 ape = "0.6"
-reqwest = { version = "0.12", features = ["json"] }
-urlencoding = "2.1"
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
 axum-range = { version = "0.5.0" }
 bitcode = { version = "0.6.3", features = ["serde"] }
@@ -62,13 +60,14 @@ toml = "0.8.19"
 tower = { version = "0.5.2" }
 tower-http = { version = "0.6.2", features = [
 	"compression-gzip",
-	"cors",
 	"fs",
 	"normalize-path",
 ] }
 trie-rs = { version = "0.4.2", features = ["serde"] }
 unicase = "2.7.0"
 ureq = { version = "2.10.0", default-features = false, features = ["tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+urlencoding = "2.1"
 utoipa = { version = "5.3", features = ["axum_extras"] }
 utoipa-axum = { version = "0.1" }
 utoipa-scalar = { version = "0.2", features = ["axum"] }
@@ -77,10 +76,6 @@ utoipa-scalar = { version = "0.2", features = ["axum"] }
 version = "0.8.1"
 default-features = false
 features = ["http1", "json", "tokio", "tower-log", "query"]
-
-[dependencies.hyper]
-version = "1.0"
-features = ["http1", "server"]
 
 [dependencies.image]
 version = "0.25.2"

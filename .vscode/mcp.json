@@ -1,21 +1,11 @@
 {
-  "inputs": [
-    {
-      "type": "promptString",
-      "id": "perplexity-key",
-      "description": "Perplexity API Key",
-      "password": true
-    }
-  ],
-  "servers": {
-    "perplexity-mcp-server": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["dist/index.js"],
-      "cwd": "/home/ramon/mcp-servers/modelcontextprotocol/perplexity-ask",
-      "env": {
-        "PERPLEXITY_API_KEY": "${input:perplexity-key}"
-      }
-    }
-  }
+	"inputs": [
+		{
+			"type": "promptString",
+			"id": "perplexity-key",
+			"description": "Perplexity API Key",
+			"password": true
+		}
+	],
+	"servers": {}
 }

@@ -1,0 +1,148 @@
+# HOWTO — Polaris neu bauen (Update)
+
+Gilt fuer ein Update / einen Neubau des Polaris-Dockers (Backend Rust + Frontend
+polaris-web in einem Image, Port 5050). Das Image ist bewusst ein **schlankes
+Runtime-Image**: Backend und Frontend werden NICHT in Docker gebaut, sondern
+zuerst auf dem Host vorgebaut (`target/release/polaris` und `polaris-web/dist/`)
+und dann in den Container kopiert.
+
+---
+
+## 1. Voraussetzungen
+
+- Docker mit BuildKit (standard ab Docker 23+) + docker compose (v2)
+- Rust-Toolchain (rustup stable) + build-essential + pkg-config + libssl-dev
+- Node.js/npm (node 20+)
+- Netzwerkzugriff beim Bauen (Cargo/npm laden Dependencies nach)
+
+Automatisch pruefbar:
+
+    docker --version
+    docker compose version
+    cargo --version
+    node --version && npm --version
+
+---
+
+## 2. Alles neu bauen (Standard-Weg)
+
+Ein Befehl baut Backend -> Frontend -> Docker-Image:
+
+    ./build_docker.sh
+
+Das ruft nacheinander auf:
+- `./build_backend.sh`  -> cargo build --release  -> target/release/polaris
+- `./build_web.sh`      -> (npm install;) npm run build -> polaris-web/dist/
+- `docker build -t polaris:latest .`
+
+Danach Container starten:
+
+    docker compose up -d
+
+Pruefen:
+
+    docker logs polaris            # erwartet: "Starting up server" + "Collection scan"
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:5050/   # 200
+    # UI im Browser: http://localhost:5050  (Initial-Setup beim ersten Start)
+
+---
+
+## 3. Einzeln (nur was man braucht)
+
+    ./build_backend.sh     # nur Backend neu bauen
+    ./build_web.sh         # nur Frontend neu bauen
+    docker build -t polaris:latest .     # nur Image neu (nutzt vorhandene Artefakte)
+    docker compose up -d --build         # Image + Container zusammen
+
+Eigenes Tag:
+
+    IMAGE_TAG=polaris:0.1.0 ./build_docker.sh
+
+Nur Image neu bauen ohne Container zu starten: `docker compose build`.
+
+---
+
+## 4. Ohne Docker (reine Backend/Frontend-Verifikation)
+
+    cargo build --release                # im Stamm, Backend
+    (cd polaris-web && npm install && npm run build)   # Frontend
+
+Backend manuell starten:
+
+    ./target/release/polaris --foreground --port 5050 \
+      --web polaris-web/dist --data /var/lib/polaris
+
+> WICHTIG: `--foreground` ist Pflicht. Ohne daemonisiert Polaris und der
+> Prozess (PID 1 im Container) beendet sich -> Container-Restart-Loop.
+
+---
+
+## 5. Wichtige Fallen
+
+### esbuild-Runaway beim Frontend-Build (dieser Host!)
+`vite build` explodiert auf diesem Host (7,7 GiB, oft unter Last) zuverlaessig:
+esbuild 0.18.20 spawnt ~900 dingende `esbuild --service=...`-Prozesse, die
+RAM + Swap leerfressen. `vue-tsc` laeuft sauber durch, aber vite beendet nie
+(`Error: The service was stopped`). Das ist kein Skriptfehler und kein reines
+Speicherproblem (reproduziert auch bei 5 GiB frei) — es ist ein
+esbuild-Handshake-Fehler unter Last.
+
+- NICHT blind wiederholen — jeder Versuch re-entert die Explosion und riskiert
+  den Host (OOM).
+- Existierendes funktionierendes `polaris-web/dist/` ist ausreichend zum
+  Shippen, wenn der Front-Code sich nicht geaendert hat.
+- Fuer einen frischen Web-Build notfalls auf einem ruhigeren Host laufen lassen.
+
+Runaway stoppen (das `[ ]`-Muster ist wichtig, damit pkill sich nicht selbst trifft):
+
+    pgrep -fc 'esbuild[ ]--service'
+    for i in $(seq 1 80); do
+      [ "$(pgrep -fc 'esbuild[ ]--service')" -eq 0 ] && break
+      pkill -9 -f 'esbuild[ ]--service'
+      sleep 0.4
+    done
+    pgrep -fc 'esbuild[ ]--service'   # muss 0 sein, RAM wieder frei
+
+### Host-glibc vs. Container-glibc
+Die vorgebaute Rust-Binary muss abwaertskompatibel zur Laufzeit-Basis sein.
+Host Ubuntu 22.04 (glibc 2.35) -> `debian:bookworm-slim` (2.36) passt (neuer
+Container ist ok). Wenn der HOST neuer wäre als der Container, startet der
+Container nicht. Laufzeit-Base also immer >= Host-glibc halten.
+
+### `npm install` statt `npm ci`
+Im `build_web.sh` wird bewusst `npm install` verwendet, weil das Lockfile nach
+dem Pin (vue3-apexcharts 1.7.0) momentan von package.json abweichen kann.
+
+---
+
+## 6. Konfiguration des Containers
+
+| Zweck | Standard | Ueberschreiben |
+|---|---|---|
+| Port | 5050 | env `POLARIS_PORT` oder CLI `--port` |
+| Web-Client | /usr/share/polaris/web | env `POLARIS_WEB_DIR` |
+| Daten (polaris.toml, Index, Playlists) | /var/lib/polaris | env `POLARIS_DATA_DIR` |
+| Musik | Mount unter /music | im UI als Mount registrieren |
+
+`docker-compose.yml` bindet `./music` -> /music:ro und ein benanntes Volume
+`polaris-data:/var/lib/polaris`. Einstellungen koennen im Container auch per
+CLI-Flags gesetzt werden: `docker run polaris:latest --port 8080`.
+
+### Sonos
+Die Sonos-Konfiguration (sonos-node-http-api URL + MP3/SMB-Server) ist NICHT im
+Image hartkodiert — sie wird nach dem ersten Start ueber Settings -> Sonos in
+der Weboberflaeche (bzw. in polaris.toml) gesetzt.
+
+---
+
+## 7. Repos
+
+- Backend-Projekt (Rust, Docker): Stammverzeichnis, git-Repo aus diesem Ordner.
+- Frontend `polaris-web/`: EIGENES git-Repo (eigene .git-Wurzel, kein
+  Submodul im Parent). Beim Committen beide Repos einzeln committen:
+
+    git -C . add -A && git -C . commit    # Backend/Docker
+    git -C polaris-web add -A && git -C polaris-web commit   # Frontend
+
+Unaufgeraeumtes (bewusst NICHT tracked): `*.rs.backup`, `*.backup2`,
+`readme.txt`, `cargo-build.log`, `web/` (alte kopie von dist).

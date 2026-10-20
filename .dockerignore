@@ -1,0 +1,25 @@
+.git
+**/.git
+**/node_modules
+**/test-results
+**/playwright-report
+test-data
+*.rs.backup
+*.backup
+*.backup2
+readme.txt
+temp_audio_routing_fix.txt
+.direnv
+**/.direnv
+*.log
+
+# Runtime-/Laufartefakte im Repo-Root (gehoeren nicht ins Image).
+# WICHTIG: `target` und `**/dist` duerfen NICHT ausgeschlossen werden -
+#  target/release/polaris und polaris-web/dist werden vom Dockerfile kopiert.
+auth.secret
+collection.index
+polaris.ndb
+polaris.pid
+polaris.toml
+/peaks
+/thumbnails

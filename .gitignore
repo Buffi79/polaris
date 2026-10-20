@@ -4,6 +4,15 @@
 # Build output
 target
 
+# Frontend-Build-Artefakt (Copy des Web-Builds in den Repo-Stamm)
+/web
+
+# Build-/Backup-Artefakte (Notizen/Alt-Sicherungen)
+cargo-build.log
+*.backup
+*.backup2
+*.rs.backup
+
 # Test output
 test-output
 
@@ -19,10 +28,7 @@ polaris.pid
 profile.json
 /peaks
 /thumbnails
-/polaris-web
-/web
 
 # Release process artifacts (usually runs on CI)
 release
 *.res
-*.backup
