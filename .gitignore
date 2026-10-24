@@ -32,3 +32,6 @@ profile.json
 # Release process artifacts (usually runs on CI)
 release
 *.res
+
+# Lokale Laufzeit-Daten (Docker-Mounts, enthaelt auth.secret, polaris.toml, Index)
+/data

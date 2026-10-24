@@ -7,7 +7,7 @@ use utoipa_axum::routes;
 
 use crate::{
     app::{config, App}, 
-    server::{dto::{SonosModeCommand, SonosSeekBody, SonosSetVolumeBody, SonosTransportCommand, SonosVolumeCommand, sonos_settings::SonosSettings}, error::APIError},
+    server::{dto::{SonosModeCommand, SonosSeekBody, SonosSetVolumeBody, SonosTransportCommand, SonosVolumeCommand, sonos_settings::{SonosSettings, SonosSettingsResponse}}, error::APIError},
     sonos::{PlayTrackRequest, SonosResponse, SonosService, SonosSpeaker, SonosState},
 };
 
@@ -431,7 +431,7 @@ async fn post_sonos_playlist(
 async fn get_sonos_settings(
     _auth: Auth,
     State(config_manager): State<config::Manager>,
-) -> Result<Json<SonosSettings>, APIError> {
+) -> Result<Json<SonosSettingsResponse>, APIError> {
     let http_api_url = config_manager
         .get_sonos_api_url()
         .await
@@ -442,9 +442,10 @@ async fn get_sonos_settings(
         .await
         .unwrap_or_else(|| "".to_string()); // Return empty string if not set
 
-    Ok(Json(SonosSettings {
+    Ok(Json(SonosSettingsResponse {
         http_api_url,
-        mp3_server_url,
+        mp3_server_url: mp3_server_url.clone(),
+        mp3_server: mp3_server_url,
     }))
 }
 
@@ -626,6 +627,8 @@ async fn post_toggle_play_pause(
     State(config_manager): State<config::Manager>,
     AxumPath(speaker_id): AxumPath<String>,
 ) -> Result<Json<SonosResponse>, APIError> {
+    use log::{error, info, warn};
+
     let base_url = config_manager
         .get_sonos_api_url()
         .await
@@ -635,7 +638,15 @@ async fn post_toggle_play_pause(
     let response = service
         .toggle_play_pause(&speaker_id)
         .await
-        .map_err(|_| APIError::Internal)?;
+        .map_err(|e| {
+            error!("Sonos play_pause '{}' request failed: {}", speaker_id, e);
+            APIError::Internal
+        })?;
+    if response.success {
+        info!("Sonos play_pause '{}' OK, response: {}", speaker_id, response.message);
+    } else {
+        warn!("Sonos play_pause '{}' FAILED, response: {}", speaker_id, response.message);
+    }
     Ok(Json(response))
 }
 

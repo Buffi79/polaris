@@ -7,19 +7,18 @@ services:
     container_name: polaris
     restart: unless-stopped
     ports:
-      - "5050:5050"
+      - "8919:5050"
     environment:
       POLARIS_PORT: "5050"
       # sonos-node-http-api und MP3-Server: werden über die Weboberfläche
       # (Settings -> Sonos) gesetzt. Optional als Env-Vars vorbefüllen:
       # POLARIS_SONOS_API_URL: "http://192.168.0.5:5005"
     volumes:
-      # Persistente Daten (polaris.toml, Index, Playlists)
-      - polaris-data:/var/lib/polaris
-      # Deine Musikbibliothek (read-only empfohlen)
-      - ./music:/music:ro
-      # Optional: SMB-Freigabe für Sonos (CIFS), wenn im selben Host gemountet
-      # - /mnt/musik:/mnt/musik:ro
-
-volumes:
-  polaris-data:
+      - ./data/cache:/var/cache/polaris 
+      - ./data/data:/var/lib/polaris 
+      - /mnt/mp3:/music 
+      - /var/run/docker.sock:/var/run/docker.sock
+networks:
+  default:
+    name: traefik_webgateway
+    

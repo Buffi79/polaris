@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use log::{info, warn};
+use log::{error, info, warn};
 
 use utoipa::ToSchema;
 
@@ -77,15 +77,16 @@ impl SonosService {
         let url = format!("{}/{}/{}", self.base_url, speaker_id, command);
         match self.client.get(&url).send().await {
             Ok(response) => {
-                if response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                if status.is_success() {
+                    info!("Sonos API {} '{}': HTTP {} - {}", command, speaker_id, status, text);
                     Ok(SonosResponse {
                         success: true,
                         message: format!("Successfully sent command '{}' to speaker '{}'", command, speaker_id),
                     })
                 } else {
-                    let status = response.status();
-                    let text = response.text().await.unwrap_or_default();
-                    warn!("Error from Sonos API for command '{}' on speaker '{}'. Status: {}, Body: {}", command, speaker_id, status, text);
+                    warn!("Sonos API {} '{}': HTTP {} - {}", command, speaker_id, status, text);
                     Ok(SonosResponse {
                         success: false,
                         message: format!("HTTP error {}: {}", status, text),
@@ -93,6 +94,7 @@ impl SonosService {
                 }
             }
             Err(e) => {
+                error!("Sonos API {} '{}' connection error: {}", command, speaker_id, e);
                 Ok(SonosResponse {
                     success: false,
                     message: format!("Connection error: {}", e),
@@ -127,6 +129,7 @@ impl SonosService {
 
     pub async fn toggle_play_pause(&self, speaker_id: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
         let state = self.get_state(speaker_id).await?;
+        info!("Sonos toggle_play_pause '{}': current is_playing={}", speaker_id, state.is_playing);
         if state.is_playing {
             self.pause(speaker_id).await
         } else {
@@ -196,12 +199,20 @@ impl SonosService {
 pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: &str) -> Result<SonosResponse, Box<dyn std::error::Error>> {
     use log::{info, warn};
     
-    // Construct the full CIFS URI exactly as in your working curl command
-    let cifs_uri = format!("x-file-cifs://{}/{}", file_server, track_path);
-    info!("CIFS URI: {}", cifs_uri);
-    
+    let file_server = file_server.trim_end_matches('/');
+    // Construct the URI: if the MP3 server is configured with an http(s)://
+    // prefix, pass the URL through directly; otherwise treat it as a CIFS
+    // host and wrap it in an x-file-cifs:// URI. The path is encoded first
+    // so special characters survive the request-level encoding below.
+    let track_uri = if file_server.starts_with("http://") || file_server.starts_with("https://") {
+        format!("{}/{}", file_server, encode_path(track_path))
+    } else {
+        format!("x-file-cifs://{}/{}", file_server, encode_path(track_path))
+    };
+    info!("Track URI: {}", track_uri);
+
     // Build the full URL for the setavtransporturi command
-    let encoded_uri = urlencoding::encode(&cifs_uri);
+    let encoded_uri = urlencoding::encode(&track_uri);
     let url = format!("{}/{}/setavtransporturi/{}", self.base_url, speaker_id, encoded_uri);
     
     info!("Sending GET to: {}", url);
@@ -276,12 +287,22 @@ pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: 
         // Construct the playlist path by appending "playlist.m3u" to the folder path
         let playlist_path = format!("{}/playlist.m3u", folder_path);
         
-        // Construct the full CIFS URI exactly as in play_track
-        let cifs_uri = format!("x-file-cifs://{}/{}", file_server, playlist_path);
-        info!("Playlist CIFS URI: {}", cifs_uri);
+        // Playlists must always be delivered to Sonos as CIFS URIs: Sonos
+        // reads the .m3u and resolves the relative file paths inside it via
+        // the file share, which only works with x-file-cifs://. Strip any
+        // http(s):// scheme from the configured MP3 server to get the CIFS
+        // host/share. The path is encoded first so special characters
+        // (spaces, umlauts) survive the request-level encoding below.
+        let server_host = file_server.trim_end_matches('/');
+        let server_host = server_host
+            .strip_prefix("http://")
+            .or_else(|| server_host.strip_prefix("https://"))
+            .unwrap_or(server_host);
+        let playlist_uri = format!("x-file-cifs://{}/{}", server_host, encode_path(&playlist_path));
+        info!("Playlist URI: {}", playlist_uri);
         
         // Build the full URL for the setavtransporturi command
-        let encoded_uri = urlencoding::encode(&cifs_uri);
+        let encoded_uri = urlencoding::encode(&playlist_uri);
         let url = format!("{}/{}/setavtransporturi/{}", self.base_url, speaker_id, encoded_uri);
         
         info!("Sending GET to: {}", url);
@@ -396,6 +417,8 @@ pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: 
                         volume
                     })
                 } else {
+                    let status = response.status();
+                    warn!("Sonos state '{}': HTTP {} - treating as not playing", speaker_id, status);
                     // Return empty state if speaker not found or error
                     Ok(SonosState {
                         is_playing: false,
@@ -407,7 +430,8 @@ pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: 
                     })
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                error!("Sonos state '{}' connection error: {} - treating as not playing", speaker_id, e);
                 // Return empty state if connection fails
                 Ok(SonosState {
                     is_playing: false,
@@ -420,6 +444,16 @@ pub async fn play_track(&self, speaker_id: &str, track_path: &str, file_server: 
             }
         }
     }
+}
+
+/// Percent-encode each path segment, keeping "/" as a separator.
+/// Needed so the final URI (e.g. x-file-cifs://host/share/The%20Day/file.mp3)
+/// is valid after node-sonos-http-api decodes the request URL once.
+fn encode_path(path: &str) -> String {
+    path.split('/')
+        .map(|seg| urlencoding::encode(seg).into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Helper function to parse time strings like "0:02:30" to seconds

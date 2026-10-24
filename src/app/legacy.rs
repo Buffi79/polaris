@@ -214,6 +214,7 @@ mod test {
 			mount_dirs: vec![],
 			ddns_update_url: None,
 			sonos_api_url: None,
+			sonos_mp3_server: None,
 			users: vec![],
 		};
 
@@ -237,6 +238,7 @@ mod test {
 			}],
 			ddns_update_url: None,
 			sonos_api_url: None,
+			sonos_mp3_server: None,
 			users: vec![config::storage::User {
 				name: "example_user".to_owned(),
 				admin: Some(true),

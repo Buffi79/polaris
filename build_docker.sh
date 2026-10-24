@@ -19,10 +19,10 @@ cd "$(dirname "$0")"
 IMAGE_TAG="${IMAGE_TAG:-polaris:latest}"
 
 echo "==> Stufe 1: Backend bauen ..."
-./build_backend.sh
+#./build_backend.sh
 
 echo "==> Stufe 2: Frontend bauen ..."
-./build_web.sh
+#./build_web.sh
 
 echo "==> Stufe 3: Docker-Image '${IMAGE_TAG}' bauen ..."
 docker build -t "${IMAGE_TAG}" .
